@@ -1,7 +1,7 @@
 var EventEmitter = require('events').EventEmitter;
 var deck = require('deck');
 var Lazy = require('lazy');
-var Hash = require('hashish');
+var json = require('big-json');
 
 module.exports = function (order) {
     if (!order) order = 2;
@@ -38,7 +38,7 @@ module.exports = function (order) {
                 var next = links[i];
                 var cnext = clean(next);
                 
-                var node = Hash.has(db, cword)
+                var node = db[cword] !== undefined
                     ? db[cword]
                     : {
                         count : 0,
@@ -50,36 +50,42 @@ module.exports = function (order) {
                 db[cword] = node;
                 
                 node.count ++;
-                node.words[word] = (
-                    Hash.has(node.words, word) ? node.words[word] : 0
-                ) + 1;
-                node.next[cnext] = (
-                    Hash.has(node.next, cnext) ? node.next[cnext] : 0
-                ) + 1
+                node.words[word] = node.words[word] === undefined ? 1 : node.words[word] + 1;
+                node.next[cnext] = node.next[cnext] === undefined ? 1 : node.next[cnext] + 1;
                 if (i > 1) {
                     var prev = clean(links[i-2]);
-                    node.prev[prev] = (
-                        Hash.has(node.prev, prev) ? node.prev[prev] : 0
-                    ) + 1;
+                    node.prev[prev] = node.prev[prev] === undefined ? 1 : node.prev[prev] + 1;
                 }
                 else {
                     node.prev[''] = (node.prev[''] || 0) + 1;
                 }
             }
             
-            if (!Hash.has(db, cnext)) db[cnext] = {
+            if (db[cnext] === undefined) db[cnext] = {
                 count : 1,
                 words : {},
                 next : { '' : 0 },
                 prev : {},
             };
             var n = db[cnext];
-            n.words[next] = (Hash.has(n.words, next) ? n.words[next] : 0) + 1;
-            n.prev[cword] = (Hash.has(n.prev, cword) ? n.prev[cword] : 0) + 1;
+            n.words[next] = n.words[next] === undefined ? 1 : n.words[next] + 1;
+            n.prev[cword] = n.prev[cword] === undefined ? 1 : n.prev[cword] + 1;
             n.next[''] = (n.next[''] || 0) + 1;
             
             if (cb) cb(null);
         }
+    };
+
+    self.readExternal = function(data) {
+        db = JSON.parse(data);
+    };
+
+    self.writeExternal = function() {
+        return JSON.stringify(db);
+    };
+
+    self.getDatabase = function() {
+        return db;
     };
     
     self.search = function (text) {
@@ -90,7 +96,7 @@ module.exports = function (order) {
         var groups = {};
         for (var i = 0; i < words.length; i += order) {
             var word = clean(words.slice(i, i + order).join(' '));
-            if (Hash.has(db, word)) groups[word] = db[word].count;
+            if (db[word]) groups[word] = db[word].count;
         }
         
         return deck.pick(groups);
@@ -102,8 +108,13 @@ module.exports = function (order) {
     
     self.next = function (cur) {
         if (!cur || !db[cur]) return undefined;
-        
+
         var next = deck.pick(db[cur].next);
+
+        // while(deck.pick(db[next].words == cur)) {
+        //     next = deck.pick(db[cur].next);
+        // }
+        
         return next && {
             key : next,
             word : deck.pick(db[next].words),
@@ -168,13 +179,13 @@ module.exports = function (order) {
                 ncur = null;
                 if (next) {
                     ncur = next.key;
-                    res.unshift(next.word);
+                    res.push(next.word);
                     if (limit && res.length >= limit) break;
                 }
             }
         }
         
-        return res;
+        return self.fill(cur,limit-res.length).concat(res);
     };
     
     self.respond = function (text, limit) {
